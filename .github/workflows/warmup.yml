@@ -1,23 +1,38 @@
 name: Claude Code Warmup
-
 on:
   schedule:
-    - cron: '0 4 * * 1-5'   # 04:00 Mon-Fri
-    - cron: '0 9 * * 1-5'   # 09:00 Mon-Fri
-    - cron: '0 13 * * 1-5'  # 13:00 Mon-Fri
-    - cron: '0 18 * * 1-5'  # 18:00 Mon-Fri
+    # Bratislava 06:00, 11:00, 16:00, 21:00
+    # CET  UTC+1: 05,10,15,20 UTC
+    # CEST UTC+2: 04,09,14,19 UTC
+    - cron: '0 4,5,9,10,14,15,19,20 * * 1-5'
   workflow_dispatch: {}
-
 concurrency:
   group: claude-warmup
   cancel-in-progress: true
-
 jobs:
   warmup:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
+      - name: Check Bratislava schedule window
+        id: schedule_check
+        run: |
+          now_hhmm="$(TZ=Europe/Bratislava date +%H%M)"
+          dow="$(TZ=Europe/Bratislava date +%u)"
+          run=false
+          if [ "$dow" -ge 1 ] && [ "$dow" -le 5 ]; then
+            for target in 0600 1100 1600 2100; do
+              diff=$(( 10#$now_hhmm - 10#$target ))
+              [ $diff -lt 0 ] && diff=$(( -diff ))
+              if [ $diff -le 15 ]; then
+                run=true
+                break
+              fi
+            done
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
       - name: Validate configuration
+        if: steps.schedule_check.outputs.run == 'true'
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_OAUTH_TOKEN }}
         run: |
@@ -26,11 +41,11 @@ jobs:
             echo "Add it in Settings > Secrets and variables > Actions."
             exit 1
           fi
-
       - name: Install Claude Code
+        if: steps.schedule_check.outputs.run == 'true'
         run: npm install -g @anthropic-ai/claude-code
-
       - name: Ping Claude to anchor 5-hour window
+        if: steps.schedule_check.outputs.run == 'true'
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_OAUTH_TOKEN }}
         run: |
@@ -42,24 +57,20 @@ jobs:
           status=$?
           set -e
           cat "$output_file"
-
           if [ $status -eq 0 ]; then
             echo "Claude warmup request succeeded."
             echo "✓ Warmup complete"
             exit 0
           fi
-
           if grep -Eiq "expired|unauthorized|invalid token|authentication|auth failed|login required|not logged in" "$output_file"; then
             echo "Claude token appears invalid or expired."
             echo "Run 'claude setup-token' locally and update the CLAUDE_OAUTH_TOKEN GitHub secret."
             exit 1
           fi
-
           if grep -qi "rate limit" "$output_file"; then
             echo "Claude reported a rate limit; treating as warmup success."
             echo "✓ Warmup complete"
             exit 0
           fi
-
           echo "Claude warmup failed with an unexpected error."
           exit $status
