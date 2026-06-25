@@ -13,9 +13,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
+      - name: Debug schedule
+        run: |
+          date -u
+          TZ=Europe/Bratislava date
       - name: Check Bratislava schedule window
         id: schedule_check
         run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual dispatch detected; bypassing schedule check."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+        
           now_hhmm="$(TZ=Europe/Bratislava date +%H%M)"
           dow="$(TZ=Europe/Bratislava date +%u)"
           run=false
@@ -23,7 +33,7 @@ jobs:
             for target in 0600 1100 1600 2100; do
               diff=$(( 10#$now_hhmm - 10#$target ))
               [ $diff -lt 0 ] && diff=$(( -diff ))
-              if [ $diff -le 15 ]; then
+              if [ $diff -le 30 ]; then
                 run=true
                 break
               fi
